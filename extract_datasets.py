@@ -1,4 +1,4 @@
-"""Extract or verify the dataset collection with Python's standard library."""
+"""Copy, extract, or verify the mixed JSONL/gzip dataset collection."""
 
 import argparse
 import gzip
@@ -25,13 +25,16 @@ def main():
     if not args.verify_only:
         args.output.mkdir(parents=True, exist_ok=True)
     for entry in manifest["files"]:
-        archive = (root / entry["archive"]).resolve()
-        if root not in archive.parents:
-            raise ValueError("Archive path is outside the repository")
-        if digest_file(archive) != entry["compressed_sha256"]:
-            raise ValueError(f"Archive checksum mismatch: {archive.name}")
+        stored = (root / entry["path"]).resolve()
+        if root not in stored.parents:
+            raise ValueError("Dataset path is outside the repository")
+        storage_format = entry["storage_format"]
+        if storage_format not in ("jsonl", "gzip"):
+            raise ValueError(f"Unsupported storage format: {storage_format}")
+        if stored.stat().st_size != entry["stored_bytes"] or digest_file(stored) != entry["stored_sha256"]:
+            raise ValueError(f"Stored file checksum or size mismatch: {stored.name}")
         if args.verify_only:
-            print(f"Verified {archive.name}")
+            print(f"Verified {stored.name}")
             continue
         name = entry["source_filename"]
         if Path(name).name != name or name in ("", ".", ".."):
@@ -45,7 +48,8 @@ def main():
         temporary = target.with_name(target.name + ".partial")
         digest = hashlib.sha256()
         size = 0
-        with gzip.open(archive, "rb") as src, temporary.open("xb") as dst:
+        source = gzip.open(stored, "rb") if storage_format == "gzip" else stored.open("rb")
+        with source as src, temporary.open("xb") as dst:
             while block := src.read(4 * 1024 * 1024):
                 digest.update(block)
                 size += len(block)
